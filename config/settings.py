@@ -124,3 +124,4 @@ STATIC_URL = 'static/'
 #URLS DE LOS MICROSERVICIOS
 MS_INVENTARIO_URL = os.environ.get('MS_INVENTARIO_URL', 'http://localhost:8002')
 MS_USUARIO_URL = os.environ.get('MS_USUARIO_URL', 'http://localhost:8001')
+MS_LOGIN_URL = os.environ.get('MS_LOGIN_URL', 'http://127.0.0.1:8003')

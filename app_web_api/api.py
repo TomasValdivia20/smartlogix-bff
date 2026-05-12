@@ -2,6 +2,7 @@ from ninja import NinjaAPI, Schema
 from typing import List, Optional
 from .clients.inventario_client import obtener_todos_los_productos
 from .clients import usuario_client
+from .clients import login_client
 
 # Instanciamos la API con los datos de tu plataforma
 api = NinjaAPI(
@@ -35,6 +36,21 @@ class UsuarioPymeOut(Schema): # Lo que devolvemos al frontend
     rol: str
     activo: bool
 
+class LoginIn(Schema):
+    email: str
+    password: str
+
+class UsuarioLoginOut(Schema):
+    rut_empresa: str
+    email: str
+    rol: str
+    nombre: str
+
+class LoginOut(Schema):
+    access_token: str
+    token_type: str
+    usuario: UsuarioLoginOut
+
 
 # Un endpoint de prueba súper rápido
 @api.get("/health")
@@ -50,9 +66,8 @@ async def listar_productos_bff(request):
     datos = await obtener_todos_los_productos()
     return datos
 
-# --- ENDPOINTS ---
+# --- ENDPOINTS Usuarios ---
 
-# --- ENDPOINTS ---
 
 # Agregamos 500: dict aquí
 @api.post("/usuarios", response={201: UsuarioPymeOut, 400: dict, 500: dict})
@@ -73,4 +88,10 @@ async def bff_detalle_usuario(request, rut: str):
 async def bff_actualizar_usuario(request, rut: str, data: UsuarioPymeUpdateIn):
     datos_actualizar = {k: v for k, v in data.dict().items() if v is not None}
     respuesta, status_code = await usuario_client.actualizar_usuario_pyme(rut, datos_actualizar)
+    return status_code, respuesta
+
+# ¡Agregamos el 404: dict a la lista!
+@api.post("/login", response={200: LoginOut, 400: dict, 401: dict, 404: dict, 500: dict})
+async def bff_login(request, data: LoginIn):
+    respuesta, status_code = await login_client.procesar_login(data.dict())
     return status_code, respuesta

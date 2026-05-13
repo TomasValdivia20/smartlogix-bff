@@ -3,7 +3,8 @@ from typing import List, Optional
 from .clients.inventario_client import obtener_todos_los_productos
 from .clients import usuario_client
 from .clients import login_client
-
+import httpx
+import json
 # Instanciamos la API con los datos de tu plataforma
 api = NinjaAPI(
     title="SmartLogix BFF API",
@@ -65,6 +66,35 @@ async def listar_productos_bff(request):
     # El BFF llama a su "mensajero" y espera la lista de productos
     datos = await obtener_todos_los_productos()
     return datos
+@api.post("/productos")
+async def bff_crear_producto(request):
+    # 1. Tomamos el JSON puro que envía el Front, sin que Ninja lo bloquee
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
+
+    url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
+    
+    # 2. Pasamos el Token de seguridad
+    headers = {}
+    if "Authorization" in request.headers:
+        headers["Authorization"] = request.headers["Authorization"]
+
+    # 3. Viaje al MS-Inventario
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url_ms_inventario, json=payload, headers=headers)
+        
+        # Si el ms-inventario lo guarda exitosamente (200 o 201 Created)
+        if response.status_code in [200, 201]:
+            return response.json()
+        else:
+            # Si el ms-inventario se enoja (ej. "SKU repetido"), le pasamos el error exacto al Front
+            return api.create_response(
+                request, 
+                response.json(), 
+                status=response.status_code
+            )
 
 # --- ENDPOINTS Usuarios ---
 

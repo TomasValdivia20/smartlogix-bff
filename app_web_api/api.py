@@ -1,8 +1,10 @@
-from ninja import NinjaAPI, Schema
+import os
+from ninja import NinjaAPI, Schema, Router
 from typing import List, Optional
 from .clients.inventario_client import obtener_todos_los_productos
 from .clients import usuario_client
 from .clients import login_client
+from ninja import Router
 import httpx
 import json
 # Instanciamos la API con los datos de tu plataforma
@@ -96,9 +98,8 @@ async def bff_crear_producto(request):
                 status=response.status_code
             )
 
-# --- ENDPOINTS Usuarios ---
 
-
+#ENDPOINTS 
 # Agregamos 500: dict aquí
 @api.post("/usuarios", response={201: UsuarioPymeOut, 400: dict, 500: dict})
 async def bff_crear_usuario(request, data: UsuarioPymeIn):
@@ -125,3 +126,20 @@ async def bff_actualizar_usuario(request, rut: str, data: UsuarioPymeUpdateIn):
 async def bff_login(request, data: LoginIn):
     respuesta, status_code = await login_client.procesar_login(data.dict())
     return status_code, respuesta
+
+# --- NUEVO ROUTER: ENVIOS Y RUTAS (ms-envios) ---
+router_envios = Router(tags=["Envíos y Rutas"])
+# Usamos un valor por defecto seguro por si se te olvida ponerlo en el .env
+URL_MS_ENVIOS = os.environ.get('URL_MS_ENVIOS', 'http://127.0.0.1:8006/api/envios')
+
+@router_envios.get("/rutas")
+async def obtener_rutas(request):
+    """
+    El BFF va a buscar las rutas al ms-envios de forma asíncrona.
+    """
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{URL_MS_ENVIOS}/rutas/")
+        return response.json()
+
+# ¡LA MAGIA OCURRE AQUÍ! Acoplamos el router a la API principal
+api.add_router("/logistica", router_envios)

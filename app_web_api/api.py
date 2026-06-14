@@ -4,6 +4,7 @@ from typing import List, Optional
 from .clients.inventario_client import obtener_todos_los_productos
 from .clients import usuario_client
 from .clients import login_client
+from .clients import pedidos_client  # <-- Añade esta línea arriba
 from ninja import Router
 import httpx
 import json
@@ -97,7 +98,62 @@ async def bff_crear_producto(request):
                 response.json(), 
                 status=response.status_code
             )
+        
+# --- ENDPOINTS DE PEDIDOS (CONFIGURADOS EN EL PUERTO 8007) ---
 
+@api.get("/pedidos")
+async def listar_pedidos_bff(request):
+    """El BFF llama de forma asíncrona al MS-Pedidos en el puerto 8007"""
+    # Usamos el puerto 8007 y apuntamos directo a /pedidos/ según el urls.py del MS
+    url_ms_pedidos = "http://127.0.0.1:8007/pedidos/"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url_ms_pedidos, timeout=5.0)
+            if response.status_code == 200:
+                return response.json()
+            return api.create_response(request, response.json(), status=response.status_code)
+        except httpx.RequestError as exc:
+            # Si el microservicio en el 8007 está apagado, avisamos con un 503 limpio
+            return api.create_response(
+                request, 
+                {"error": f"No se pudo conectar con el microservicio de pedidos en el puerto 8007: {str(exc)}"}, 
+                status=503
+            )
+
+
+@api.post("/pedidos")
+async def bff_crear_pedido(request):
+    """El BFF toma el JSON del Front y lo envía al puerto 8007"""
+    # 1. Tomamos el JSON puro que envía el Front
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
+
+    # Ajustamos la URL exacta hacia el puerto 8007
+    url_ms_pedidos = "http://127.0.0.1:8007/pedidos/"
+    
+    # 2. Pasamos el Token de seguridad si viene desde React
+    headers = {}
+    if "Authorization" in request.headers:
+        headers["Authorization"] = request.headers["Authorization"]
+
+    # 3. Viaje al MS-Pedidos en el puerto 8007
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url_ms_pedidos, json=payload, headers=headers, timeout=5.0)
+            
+            if response.status_code in [200, 201]:
+                return response.json()
+            else:
+                return api.create_response(request, response.json(), status=response.status_code)
+        except httpx.RequestError as exc:
+            return api.create_response(
+                request, 
+                {"error": f"Error de comunicación con el MS-Pedidos (Puerto 8007): {str(exc)}"}, 
+                status=503
+            )
 
 #ENDPOINTS 
 # Agregamos 500: dict aquí

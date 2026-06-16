@@ -128,3 +128,4 @@ STATIC_URL = 'static/'
 MS_INVENTARIO_URL = os.environ.get('MS_INVENTARIO_URL', 'http://localhost:8002')
 MS_USUARIO_URL = os.environ.get('MS_USUARIO_URL', 'http://localhost:8001')
 MS_LOGIN_URL = os.environ.get('MS_LOGIN_URL', 'http://127.0.0.1:8003')
+MS_ENVIOS_URL = os.environ.get('MS_ENVIOS_URL', 'http://127.0.0.1:8006/api/envios')

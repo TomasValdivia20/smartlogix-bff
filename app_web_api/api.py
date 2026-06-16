@@ -1,14 +1,13 @@
 import os
 from ninja import NinjaAPI, Schema, Router
-from typing import List, Optional
+from typing import Optional
 from .clients.inventario_client import obtener_todos_los_productos
 from .clients import usuario_client
 from .clients import login_client
 from .clients import pedidos_client  # <-- Añade esta línea arriba
-from ninja import Router
+from .clients import envios_client
 import httpx
 import json
-# Instanciamos la API con los datos de tu plataforma
 api = NinjaAPI(
     title="SmartLogix BFF API",
     description="API Gateway que orquesta la comunicación entre React, Inventario, usuarios y login.",
@@ -156,46 +155,184 @@ async def bff_crear_pedido(request):
             )
 
 #ENDPOINTS 
-# Agregamos 500: dict aquí
-@api.post("/usuarios", response={201: UsuarioPymeOut, 400: dict, 500: dict})
+@api.post("/usuarios")
 async def bff_crear_usuario(request, data: UsuarioPymeIn):
-    respuesta, status_code = await usuario_client.registrar_usuario_pyme(data.dict())
-    return status_code, respuesta
+    respuesta, status_code = await usuario_client.registrar_usuario_pyme(data.model_dump())
+    if status_code in [200, 201]:
+        return respuesta
+    return api.create_response(request, respuesta, status=status_code)
 
-# Actualizamos los demás por si acaso para que sean a prueba de balas
-@api.get("/usuarios", response=List[UsuarioPymeOut])
+@api.get("/usuarios")
 async def bff_listar_usuarios(request):
     return await usuario_client.listar_usuarios_pyme()
 
-@api.get("/usuarios/{rut}", response={200: UsuarioPymeOut, 404: dict, 500: dict})
+@api.get("/usuarios/{rut}")
 async def bff_detalle_usuario(request, rut: str):
     return await usuario_client.obtener_usuario_por_rut(rut)
 
-@api.patch("/usuarios/{rut}", response={200: UsuarioPymeOut, 400: dict, 500: dict})
+@api.patch("/usuarios/{rut}")
 async def bff_actualizar_usuario(request, rut: str, data: UsuarioPymeUpdateIn):
-    datos_actualizar = {k: v for k, v in data.dict().items() if v is not None}
+    datos_actualizar = {k: v for k, v in data.model_dump().items() if v is not None}
     respuesta, status_code = await usuario_client.actualizar_usuario_pyme(rut, datos_actualizar)
-    return status_code, respuesta
+    if status_code == 200:
+        return respuesta
+    return api.create_response(request, respuesta, status=status_code)
 
-# ¡Agregamos el 404: dict a la lista!
-@api.post("/login", response={200: LoginOut, 400: dict, 401: dict, 404: dict, 500: dict})
+@api.post("/login")
 async def bff_login(request, data: LoginIn):
-    respuesta, status_code = await login_client.procesar_login(data.dict())
-    return status_code, respuesta
+    respuesta, status_code = await login_client.procesar_login(data.model_dump())
+    if status_code == 200:
+        return respuesta
+    return api.create_response(request, respuesta, status=status_code)
 
-# --- NUEVO ROUTER: ENVIOS Y RUTAS (ms-envios) ---
+# --- ROUTER ENVIOS (ms-envios) ---
 router_envios = Router(tags=["Envíos y Rutas"])
-# Usamos un valor por defecto seguro por si se te olvida ponerlo en el .env
-URL_MS_ENVIOS = os.environ.get('URL_MS_ENVIOS', 'http://127.0.0.1:8006/api/envios')
 
-@router_envios.get("/rutas")
-async def obtener_rutas(request):
-    """
-    El BFF va a buscar las rutas al ms-envios de forma asíncrona.
-    """
+@router_envios.get("/vehiculos/")
+async def listar_vehiculos(request):
+    data, status = await envios_client.proxy(request, "vehiculos", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/vehiculos/{id}/")
+async def detalle_vehiculo(request, id: str):
+    data, status = await envios_client.proxy(request, f"vehiculos/{id}", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/repartidores/")
+async def listar_repartidores(request):
+    data, status = await envios_client.proxy(request, "repartidores", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/envios/")
+async def listar_envios(request):
+    data, status = await envios_client.proxy(request, "envios", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.post("/envios/")
+async def crear_envio(request):
+    data, status = await envios_client.proxy(request, "envios", "POST")
+    if status in (200, 201):
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/envios/{id}/")
+async def detalle_envio(request, id: str):
+    data, status = await envios_client.proxy(request, f"envios/{id}", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.put("/envios/{id}/")
+async def actualizar_envio(request, id: str):
+    data, status = await envios_client.proxy(request, f"envios/{id}", "PUT")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.delete("/envios/{id}/")
+async def eliminar_envio(request, id: str):
+    data, status = await envios_client.proxy(request, f"envios/{id}", "DELETE")
+    if status == 204:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/rutas/")
+async def listar_rutas(request):
+    data, status = await envios_client.proxy(request, "rutas", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.post("/rutas/")
+async def crear_ruta(request):
+    data, status = await envios_client.proxy(request, "rutas", "POST")
+    if status in (200, 201):
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/rutas/{id}/")
+async def detalle_ruta(request, id: str):
+    data, status = await envios_client.proxy(request, f"rutas/{id}", "GET")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.put("/rutas/{id}/")
+async def actualizar_ruta(request, id: str):
+    data, status = await envios_client.proxy(request, f"rutas/{id}", "PUT")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.delete("/rutas/{id}/")
+async def eliminar_ruta(request, id: str):
+    data, status = await envios_client.proxy(request, f"rutas/{id}", "DELETE")
+    if status == 204:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.post("/rutas/{id}/calcular/")
+async def calcular_ruta(request, id: str):
+    data, status = await envios_client.proxy(request, f"rutas/{id}/calcular", "POST")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.post("/rutas/{id}/completar/")
+async def completar_ruta(request, id: str):
+    data, status = await envios_client.proxy(request, f"rutas/{id}/completar", "POST")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.post("/calcular-costos/")
+async def calcular_costos(request):
+    data, status = await envios_client.proxy(request, "calcular-costos", "POST")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.post("/geocodificar/")
+async def geocodificar(request):
+    data, status = await envios_client.proxy(request, "geocodificar", "POST")
+    if status == 200:
+        return data
+    return api.create_response(request, data, status=status)
+
+@router_envios.get("/productos/")
+async def listar_productos(request):
+    url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
     async with httpx.AsyncClient() as client:
-        response = await client.get(f"{URL_MS_ENVIOS}/rutas/")
-        return response.json()
+        try:
+            response = await client.get(url_ms_inventario, timeout=5.0)
+            return response.json()
+        except httpx.RequestError as exc:
+            return api.create_response(
+                request, {"error": f"Error de conexión con MS-Inventario: {str(exc)}"}, status=503
+            )
 
-# ¡LA MAGIA OCURRE AQUÍ! Acoplamos el router a la API principal
-api.add_router("/logistica", router_envios)
+@router_envios.post("/productos/")
+async def crear_producto(request):
+    url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
+    headers = {}
+    if "Authorization" in request.headers:
+        headers["Authorization"] = request.headers["Authorization"]
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url_ms_inventario, json=payload, headers=headers)
+        if response.status_code in [200, 201]:
+            return response.json()
+        return api.create_response(request, response.json(), status=response.status_code)
+
+api.add_router("/envios", router_envios)

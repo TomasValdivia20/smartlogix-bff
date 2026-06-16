@@ -187,24 +187,31 @@ async def crear_pedido_bff(request, payload: CrearPedidoBffIn):
 # ==========================================
 @api.get("/pedido-completo/{pedido_id}")
 async def obtener_pedido_con_detalles_producto(request, pedido_id: str):
-    # 1. Traer el pedido desde el MS de Pedidos
+    # 1. Traer el pedido base desde MS-Pedidos
     pedido = await obtener_pedido_por_id(pedido_id)
     if not pedido:
-        return {"error": "El pedido no existe"}
+        return {"error": "El pedido no existe en MS-Pedidos"}
 
-    # 2. Traer la lista de productos actualizada desde el MS de Inventario
-    productos_inventario = await obtener_todos_los_productos()
-    # Lo transformamos en diccionario usando el SKU como llave para buscar rápido
-    productos_dict = {p['sku']: p for p in productos_inventario}
+    # 2. Traer la lista directa desde MS-Inventario (Puerto 8002)
+    lista_productos = await obtener_todos_los_productos()
+    
+    # Armamos el diccionario rápido relacionando SKU con el objeto completo del producto
+    productos_dict = {p['sku']: p for p in lista_productos if isinstance(p, dict) and 'sku' in p}
 
-    # 3. Cruzar los datos: Por cada ítem del pedido, le inyectamos su información de Inventario
-    for item in pedido.get('items', []):  # Cambia 'items' por 'detalles' según tus llaves
+    # 3. Mapear los ítems del pedido
+    # DRF puede devolver los productos del pedido como 'items' o 'detalles'
+    detalles_del_pedido = pedido.get('items', pedido.get('detalles', []))
+
+    for item in detalles_del_pedido:
         sku_pedido = item.get('sku')
+        
+        # Si el SKU coincide con lo que tienes en la base de datos de inventario...
         if sku_pedido in productos_dict:
-            # Mapeamos los datos reales del producto (Nombre, stock, etc.)
-            item['datos_producto_inventario'] = productos_dict[sku_pedido]
+            item['datos_inventario'] = productos_dict[sku_pedido]
         else:
-            item['datos_producto_inventario'] = {"mensaje": "Este SKU ya no existe en Inventario"}
+            item['datos_inventario'] = {
+                "mensaje": f"El SKU '{sku_pedido}' no existe en el catálogo de Inventario."
+            }
 
     return pedido
 

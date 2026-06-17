@@ -2,6 +2,7 @@ import os
 from ninja import NinjaAPI, Schema, Router
 from typing import Optional
 from .clients.inventario_client import obtener_todos_los_productos
+from .clients.pedidos_client import obtener_pedido_por_id, enviar_crear_pedido
 from .clients import usuario_client
 from .clients import login_client
 from .clients import pedidos_client  # <-- Añade esta línea arriba
@@ -98,62 +99,6 @@ async def bff_crear_producto(request):
                 status=response.status_code
             )
         
-# --- ENDPOINTS DE PEDIDOS (CONFIGURADOS EN EL PUERTO 8007) ---
-
-@api.get("/pedidos")
-async def listar_pedidos_bff(request):
-    """El BFF llama de forma asíncrona al MS-Pedidos en el puerto 8007"""
-    # Usamos el puerto 8007 y apuntamos directo a /pedidos/ según el urls.py del MS
-    url_ms_pedidos = "http://127.0.0.1:8007/pedidos/"
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url_ms_pedidos, timeout=5.0)
-            if response.status_code == 200:
-                return response.json()
-            return api.create_response(request, response.json(), status=response.status_code)
-        except httpx.RequestError as exc:
-            # Si el microservicio en el 8007 está apagado, avisamos con un 503 limpio
-            return api.create_response(
-                request, 
-                {"error": f"No se pudo conectar con el microservicio de pedidos en el puerto 8007: {str(exc)}"}, 
-                status=503
-            )
-
-
-@api.post("/pedidos")
-async def bff_crear_pedido(request):
-    """El BFF toma el JSON del Front y lo envía al puerto 8007"""
-    # 1. Tomamos el JSON puro que envía el Front
-    try:
-        payload = json.loads(request.body)
-    except json.JSONDecodeError:
-        return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
-
-    # Ajustamos la URL exacta hacia el puerto 8007
-    url_ms_pedidos = "http://127.0.0.1:8007/pedidos/"
-    
-    # 2. Pasamos el Token de seguridad si viene desde React
-    headers = {}
-    if "Authorization" in request.headers:
-        headers["Authorization"] = request.headers["Authorization"]
-
-    # 3. Viaje al MS-Pedidos en el puerto 8007
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url_ms_pedidos, json=payload, headers=headers, timeout=5.0)
-            
-            if response.status_code in [200, 201]:
-                return response.json()
-            else:
-                return api.create_response(request, response.json(), status=response.status_code)
-        except httpx.RequestError as exc:
-            return api.create_response(
-                request, 
-                {"error": f"Error de comunicación con el MS-Pedidos (Puerto 8007): {str(exc)}"}, 
-                status=503
-            )
-
 #ENDPOINTS 
 @api.post("/usuarios")
 async def bff_crear_usuario(request, data: UsuarioPymeIn):
@@ -319,20 +264,75 @@ async def listar_productos(request):
                 request, {"error": f"Error de conexión con MS-Inventario: {str(exc)}"}, status=503
             )
 
-@router_envios.post("/productos/")
-async def crear_producto(request):
-    url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
-    try:
-        payload = json.loads(request.body)
-    except json.JSONDecodeError:
-        return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
-    headers = {}
-    if "Authorization" in request.headers:
-        headers["Authorization"] = request.headers["Authorization"]
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url_ms_inventario, json=payload, headers=headers)
-        if response.status_code in [200, 201]:
-            return response.json()
-        return api.create_response(request, response.json(), status=response.status_code)
+# ==========================================
+# 1. ENDPOINT PARA CREAR UN PEDIDO (NUEVO)
+# ==========================================
+# Deja esta ruta fija: "/crear-pedido"
 
-api.add_router("/envios", router_envios)
+# --- ENDPOINTS DE PEDIDOS (CONFIGURADOS EN EL PUERTO 8007) ---
+
+@api.get("/pedidos")
+async def listar_pedidos_bff(request):
+    """El BFF llama de forma asíncrona al MS-Pedidos en el puerto 8007"""
+    # Usamos el puerto 8007 y apuntamos directo a /pedidos/ según el urls.py del MS
+    url_ms_pedidos = "http://127.0.0.1:8007/pedidos/"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url_ms_pedidos, timeout=5.0)
+            if response.status_code == 200:
+                return response.json()
+            return api.create_response(request, response.json(), status=response.status_code)
+        except httpx.RequestError as exc:
+            # Si el microservicio en el 8007 está apagado, avisamos con un 503 limpio
+            return api.create_response(
+                request, 
+                {"error": f"No se pudo conectar con el microservicio de pedidos en el puerto 8007: {str(exc)}"}, 
+                status=503
+            )
+        
+@api.post("/crear-pedido")  
+async def crear_pedido_bff(request, payload: CrearPedidoBffIn):
+    """
+    El BFF toma el JSON del Front y lo envía al puerto 8007
+    """
+    datos_pedido = payload.dict()
+    resultado, estado_http = await enviar_crear_pedido(datos_pedido)
+    return resultado
+
+
+# ==========================================
+# 2. ENDPOINT PARA VER EL PEDIDO CON DETALLES
+# ==========================================
+@api.get("/pedido-completo/{pedido_id}")
+async def obtener_pedido_con_detalles_producto(request, pedido_id: str):
+    # 1. Traer el pedido base desde MS-Pedidos
+    pedido = await obtener_pedido_por_id(pedido_id)
+    if not pedido:
+        return {"error": "El pedido no existe en MS-Pedidos"}
+
+    # 2. Traer la lista directa desde MS-Inventario (Puerto 8002)
+    lista_productos = await obtener_todos_los_productos()
+    
+    # Armamos el diccionario rápido relacionando SKU con el objeto completo del producto
+    productos_dict = {p['sku']: p for p in lista_productos if isinstance(p, dict) and 'sku' in p}
+
+    # 3. Mapear los ítems del pedido
+    # DRF puede devolver los productos del pedido como 'items' o 'detalles'
+    detalles_del_pedido = pedido.get('items', pedido.get('detalles', []))
+
+    for item in detalles_del_pedido:
+        sku_pedido = item.get('sku')
+        
+        # Si el SKU coincide con lo que tienes en la base de datos de inventario...
+        if sku_pedido in productos_dict:
+            item['datos_inventario'] = productos_dict[sku_pedido]
+        else:
+            item['datos_inventario'] = {
+                "mensaje": f"El SKU '{sku_pedido}' no existe en el catálogo de Inventario."
+            }
+
+    return pedido
+
+# ¡LA MAGIA OCURRE AQUÍ! Acoplamos el router a la API principal
+api.add_router("/logistica", router_envios)

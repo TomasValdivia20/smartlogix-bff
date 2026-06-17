@@ -2,13 +2,23 @@ import os
 from ninja import NinjaAPI, Schema, Router
 from typing import Optional
 from .clients.inventario_client import obtener_todos_los_productos
-from .clients.pedidos_client import obtener_pedido_por_id, enviar_crear_pedido
+from .clients.pedidos_client import (
+    obtener_pedido_por_id,
+    enviar_crear_pedido,
+    aprobar_pedido,
+    enviar_pedido,
+    entregar_pedido,
+    obtener_guia,
+    generar_guia,
+    listar_bodegas,
+)
 from .clients import usuario_client
 from .clients import login_client
 from .clients import pedidos_client  # <-- Añade esta línea arriba
 from .clients import envios_client
 import httpx
 import json
+from .schemas import CrearPedidoBffIn
 api = NinjaAPI(
     title="SmartLogix BFF API",
     description="API Gateway que orquesta la comunicación entre React, Inventario, usuarios y login.",
@@ -264,6 +274,24 @@ async def listar_productos(request):
                 request, {"error": f"Error de conexión con MS-Inventario: {str(exc)}"}, status=503
             )
 
+@router_envios.post("/productos/")
+async def crear_producto(request):
+    url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
+    headers = {}
+    if "Authorization" in request.headers:
+        headers["Authorization"] = request.headers["Authorization"]
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url_ms_inventario, json=payload, headers=headers)
+        if response.status_code in [200, 201]:
+            return response.json()
+        return api.create_response(
+            request, response.json(), status=response.status_code
+        )
+
 # ==========================================
 # 1. ENDPOINT PARA CREAR UN PEDIDO (NUEVO)
 # ==========================================
@@ -296,9 +324,11 @@ async def crear_pedido_bff(request, payload: CrearPedidoBffIn):
     """
     El BFF toma el JSON del Front y lo envía al puerto 8007
     """
-    datos_pedido = payload.dict()
+    datos_pedido = payload.model_dump()
     resultado, estado_http = await enviar_crear_pedido(datos_pedido)
-    return resultado
+    if estado_http in [200, 201]:
+        return resultado
+    return api.create_response(request, resultado, status=estado_http)
 
 
 # ==========================================
@@ -334,5 +364,75 @@ async def obtener_pedido_con_detalles_producto(request, pedido_id: str):
 
     return pedido
 
+
+# ==========================================
+# 3. PROXY ENDPOINTS ADICIONALES PARA MS-PEDIDOS
+# ==========================================
+
+@api.get("/pedidos/{pedido_id}")
+async def detalle_pedido_bff(request, pedido_id: str):
+    url = f"http://127.0.0.1:8007/pedidos/{pedido_id}/"
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, timeout=5.0)
+            if response.status_code == 200:
+                return response.json()
+            return api.create_response(request, response.json(), status=response.status_code)
+        except httpx.RequestError as exc:
+            return api.create_response(
+                request,
+                {"error": f"No se pudo conectar con ms-pedidos: {str(exc)}"},
+                status=503
+            )
+
+
+@api.patch("/pedidos/{pedido_id}/aprobar")
+async def aprobar_pedido_bff(request, pedido_id: str):
+    resultado, status_code = await aprobar_pedido(pedido_id)
+    if status_code == 200:
+        return resultado
+    return api.create_response(request, resultado, status=status_code)
+
+
+@api.patch("/pedidos/{pedido_id}/enviar")
+async def enviar_pedido_bff(request, pedido_id: str):
+    resultado, status_code = await enviar_pedido(pedido_id)
+    if status_code == 200:
+        return resultado
+    return api.create_response(request, resultado, status=status_code)
+
+
+@api.patch("/pedidos/{pedido_id}/entregar")
+async def entregar_pedido_bff(request, pedido_id: str):
+    resultado, status_code = await entregar_pedido(pedido_id)
+    if status_code == 200:
+        return resultado
+    return api.create_response(request, resultado, status=status_code)
+
+
+@api.get("/pedidos/{pedido_id}/guia")
+async def obtener_guia_bff(request, pedido_id: str):
+    resultado, status_code = await obtener_guia(pedido_id)
+    if status_code == 200:
+        return resultado
+    return api.create_response(request, resultado, status=status_code)
+
+
+@api.post("/pedidos/{pedido_id}/guia")
+async def generar_guia_bff(request, pedido_id: str):
+    resultado, status_code = await generar_guia(pedido_id)
+    if status_code == 201:
+        return resultado
+    return api.create_response(request, resultado, status=status_code)
+
+
+@api.get("/bodegas")
+async def listar_bodegas_bff(request):
+    resultado, status_code = await listar_bodegas()
+    if status_code == 200:
+        return resultado
+    return api.create_response(request, resultado, status=status_code)
+
+
 # ¡LA MAGIA OCURRE AQUÍ! Acoplamos el router a la API principal
-api.add_router("/logistica", router_envios)
+api.add_router("/envios", router_envios)

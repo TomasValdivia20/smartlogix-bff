@@ -1,9 +1,17 @@
 # app_web_api/clients/pedidos_client.py
 import os
 import httpx
+from urllib.parse import urlparse
 
 # URL del Microservicio de Pedidos (Puerto 8007 y la ruta base del MS)
 URL_MS_PEDIDOS = os.environ.get('URL_MS_PEDIDOS', 'http://127.0.0.1:8007/pedidos/')
+
+
+def _safe_json(response):
+    try:
+        return response.json()
+    except Exception:
+        return {"error": f"Respuesta inesperada (status {response.status_code})"}
 
 
 
@@ -56,3 +64,69 @@ async def obtener_pedido_por_id(pedido_id: str):
             return None
         except httpx.RequestError:
             return None
+
+
+async def aprobar_pedido(pedido_id: str):
+    """Pendiente → Aprobado"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.patch(f"{URL_MS_PEDIDOS}{pedido_id}/aprobar/", timeout=5.0)
+            return _safe_json(response), response.status_code
+        except httpx.RequestError:
+            return {"error": "No se pudo conectar con el microservicio de Pedidos"}, 503
+
+
+async def enviar_pedido(pedido_id: str):
+    """Aprobado → Enviado"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.patch(f"{URL_MS_PEDIDOS}{pedido_id}/enviar/", timeout=5.0)
+            return _safe_json(response), response.status_code
+        except httpx.RequestError:
+            return {"error": "No se pudo conectar con el microservicio de Pedidos"}, 503
+
+
+async def entregar_pedido(pedido_id: str):
+    """Enviado → Entregado"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.patch(f"{URL_MS_PEDIDOS}{pedido_id}/entregar/", timeout=5.0)
+            return _safe_json(response), response.status_code
+        except httpx.RequestError:
+            return {"error": "No se pudo conectar con el microservicio de Pedidos"}, 503
+
+
+async def obtener_guia(pedido_id: str):
+    """Obtiene la guía de despacho de un pedido"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(f"{URL_MS_PEDIDOS}{pedido_id}/guia/", timeout=5.0)
+            return _safe_json(response), response.status_code
+        except httpx.RequestError:
+            return {"error": "No se pudo conectar con el microservicio de Pedidos"}, 503
+
+
+async def generar_guia(pedido_id: str):
+    """Genera una guía de despacho para un pedido aprobado"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(f"{URL_MS_PEDIDOS}{pedido_id}/guia/", timeout=5.0)
+            data = _safe_json(response)
+            if response.status_code == 201:
+                return data, 201
+            return data, response.status_code
+        except httpx.RequestError:
+            return {"error": "No se pudo conectar con el microservicio de Pedidos"}, 503
+
+
+async def listar_bodegas():
+    """Lista todas las bodegas activas"""
+    url_base = os.environ.get('URL_MS_PEDIDOS', 'http://127.0.0.1:8007/api/pedidos/')
+    parsed = urlparse(url_base)
+    root_url = f"{parsed.scheme}://{parsed.netloc}/"
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(f"{root_url}bodegas/", timeout=5.0)
+            return _safe_json(response), response.status_code
+        except httpx.RequestError:
+            return {"error": "No se pudo conectar con el microservicio de Pedidos"}, 503

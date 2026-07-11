@@ -1,5 +1,6 @@
 import httpx
 from django.conf import settings
+from app_web_api.auth import make_tenant_headers
 
 MOCK_PRODUCTOS = [
     {
@@ -51,12 +52,13 @@ MOCK_PRODUCTOS = [
         "umbral_bajo": 10
     }
 ]
-async def obtener_todos_los_productos():
+async def obtener_todos_los_productos(request=None):
     url = f"{settings.MS_INVENTARIO_URL}/api/inventario/productos/"
+    headers = make_tenant_headers(request) if request else {}
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
             
             # Si el servidor responde 404, esto lanzará la excepción HTTPStatusError
             response.raise_for_status() 

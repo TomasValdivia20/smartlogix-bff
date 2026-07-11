@@ -1,6 +1,7 @@
 import json
 import httpx
 from django.conf import settings
+from app_web_api.auth import make_tenant_headers
 
 BASE_URL = settings.MS_ENVIOS_URL
 
@@ -9,6 +10,7 @@ async def proxy(request, path: str, method: str = "GET"):
     headers = {}
     if "Authorization" in request.headers:
         headers["Authorization"] = request.headers["Authorization"]
+    headers.update(make_tenant_headers(request))
 
     body = None
     if method in ("POST", "PUT", "PATCH"):

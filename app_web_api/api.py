@@ -19,6 +19,7 @@ from .clients import envios_client
 import httpx
 import json
 from .schemas import CrearPedidoBffIn
+from app_web_api.auth import make_tenant_headers, extract_tenant_rut
 api = NinjaAPI(
     title="SmartLogix BFF API",
     description="API Gateway que orquesta la comunicación entre React, Inventario, usuarios y login.",
@@ -76,8 +77,7 @@ def health_check(request):
 # --- NUEVO ENDPOINT ASÍNCRONO ---
 @api.get("/productos")
 async def listar_productos_bff(request):
-    # El BFF llama a su "mensajero" y espera la lista de productos
-    datos = await obtener_todos_los_productos()
+    datos = await obtener_todos_los_productos(request=request)
     return datos
 @api.post("/productos")
 async def bff_crear_producto(request):
@@ -88,24 +88,20 @@ async def bff_crear_producto(request):
         return api.create_response(request, {"error": "Formato JSON inválido"}, status=400)
 
     url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
-    
-    # 2. Pasamos el Token de seguridad
+
     headers = {}
     if "Authorization" in request.headers:
         headers["Authorization"] = request.headers["Authorization"]
+    headers.update(make_tenant_headers(request))
 
-    # 3. Viaje al MS-Inventario
     async with httpx.AsyncClient() as client:
         response = await client.post(url_ms_inventario, json=payload, headers=headers)
-        
-        # Si el ms-inventario lo guarda exitosamente (200 o 201 Created)
         if response.status_code in [200, 201]:
             return response.json()
         else:
-            # Si el ms-inventario se enoja (ej. "SKU repetido"), le pasamos el error exacto al Front
             return api.create_response(
-                request, 
-                response.json(), 
+                request,
+                response.json(),
                 status=response.status_code
             )
         
@@ -265,9 +261,10 @@ async def geocodificar(request):
 @router_envios.get("/productos/")
 async def listar_productos(request):
     url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
+    headers = make_tenant_headers(request)
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url_ms_inventario, timeout=5.0)
+            response = await client.get(url_ms_inventario, headers=headers, timeout=5.0)
             return response.json()
         except httpx.RequestError as exc:
             return api.create_response(
@@ -284,6 +281,7 @@ async def crear_producto(request):
     headers = {}
     if "Authorization" in request.headers:
         headers["Authorization"] = request.headers["Authorization"]
+    headers.update(make_tenant_headers(request))
     async with httpx.AsyncClient() as client:
         response = await client.post(url_ms_inventario, json=payload, headers=headers)
         if response.status_code in [200, 201]:
@@ -301,18 +299,16 @@ async def crear_producto(request):
 
 @api.get("/pedidos")
 async def listar_pedidos_bff(request):
-    """El BFF llama de forma asíncrona al MS-Pedidos en el puerto 8007"""
-    # Usamos el puerto 8007 y apuntamos directo a /pedidos/ según el urls.py del MS
     url_ms_pedidos = "http://127.0.0.1:8007/pedidos/"
+    headers = make_tenant_headers(request)
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url_ms_pedidos, timeout=5.0)
+            response = await client.get(url_ms_pedidos, headers=headers, timeout=5.0)
             if response.status_code == 200:
                 return response.json()
             return api.create_response(request, response.json(), status=response.status_code)
         except httpx.RequestError as exc:
-            # Si el microservicio en el 8007 está apagado, avisamos con un 503 limpio
             return api.create_response(
                 request, 
                 {"error": f"No se pudo conectar con el microservicio de pedidos en el puerto 8007: {str(exc)}"}, 
@@ -321,11 +317,8 @@ async def listar_pedidos_bff(request):
         
 @api.post("/crear-pedido")  
 async def crear_pedido_bff(request, payload: CrearPedidoBffIn):
-    """
-    El BFF toma el JSON del Front y lo envía al puerto 8007
-    """
     datos_pedido = payload.model_dump()
-    resultado, estado_http = await enviar_crear_pedido(datos_pedido)
+    resultado, estado_http = await enviar_crear_pedido(datos_pedido, request=request)
     if estado_http in [200, 201]:
         return resultado
     return api.create_response(request, resultado, status=estado_http)
@@ -337,12 +330,12 @@ async def crear_pedido_bff(request, payload: CrearPedidoBffIn):
 @api.get("/pedido-completo/{pedido_id}")
 async def obtener_pedido_con_detalles_producto(request, pedido_id: str):
     # 1. Traer el pedido base desde MS-Pedidos
-    pedido = await obtener_pedido_por_id(pedido_id)
+    pedido = await obtener_pedido_por_id(pedido_id, request=request)
     if not pedido:
         return {"error": "El pedido no existe en MS-Pedidos"}
 
     # 2. Traer la lista directa desde MS-Inventario (Puerto 8002)
-    lista_productos = await obtener_todos_los_productos()
+    lista_productos = await obtener_todos_los_productos(request=request)
     
     # Armamos el diccionario rápido relacionando SKU con el objeto completo del producto
     productos_dict = {p['sku']: p for p in lista_productos if isinstance(p, dict) and 'sku' in p}
@@ -372,9 +365,10 @@ async def obtener_pedido_con_detalles_producto(request, pedido_id: str):
 @api.get("/pedidos/{pedido_id}")
 async def detalle_pedido_bff(request, pedido_id: str):
     url = f"http://127.0.0.1:8007/pedidos/{pedido_id}/"
+    headers = make_tenant_headers(request)
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=5.0)
+            response = await client.get(url, headers=headers, timeout=5.0)
             if response.status_code == 200:
                 return response.json()
             return api.create_response(request, response.json(), status=response.status_code)
@@ -388,7 +382,7 @@ async def detalle_pedido_bff(request, pedido_id: str):
 
 @api.patch("/pedidos/{pedido_id}/aprobar")
 async def aprobar_pedido_bff(request, pedido_id: str):
-    resultado, status_code = await aprobar_pedido(pedido_id)
+    resultado, status_code = await aprobar_pedido(pedido_id, request=request)
     if status_code == 200:
         return resultado
     return api.create_response(request, resultado, status=status_code)
@@ -396,7 +390,7 @@ async def aprobar_pedido_bff(request, pedido_id: str):
 
 @api.patch("/pedidos/{pedido_id}/enviar")
 async def enviar_pedido_bff(request, pedido_id: str):
-    resultado, status_code = await enviar_pedido(pedido_id)
+    resultado, status_code = await enviar_pedido(pedido_id, request=request)
     if status_code == 200:
         return resultado
     return api.create_response(request, resultado, status=status_code)
@@ -404,7 +398,7 @@ async def enviar_pedido_bff(request, pedido_id: str):
 
 @api.patch("/pedidos/{pedido_id}/entregar")
 async def entregar_pedido_bff(request, pedido_id: str):
-    resultado, status_code = await entregar_pedido(pedido_id)
+    resultado, status_code = await entregar_pedido(pedido_id, request=request)
     if status_code == 200:
         return resultado
     return api.create_response(request, resultado, status=status_code)
@@ -412,7 +406,7 @@ async def entregar_pedido_bff(request, pedido_id: str):
 
 @api.get("/pedidos/{pedido_id}/guia")
 async def obtener_guia_bff(request, pedido_id: str):
-    resultado, status_code = await obtener_guia(pedido_id)
+    resultado, status_code = await obtener_guia(pedido_id, request=request)
     if status_code == 200:
         return resultado
     return api.create_response(request, resultado, status=status_code)
@@ -420,18 +414,76 @@ async def obtener_guia_bff(request, pedido_id: str):
 
 @api.post("/pedidos/{pedido_id}/guia")
 async def generar_guia_bff(request, pedido_id: str):
-    resultado, status_code = await generar_guia(pedido_id)
+    resultado, status_code = await generar_guia(pedido_id, request=request)
     if status_code == 201:
         return resultado
     return api.create_response(request, resultado, status=status_code)
 
-
 @api.get("/bodegas")
 async def listar_bodegas_bff(request):
-    resultado, status_code = await listar_bodegas()
+    resultado, status_code = await listar_bodegas(request=request)
     if status_code == 200:
         return resultado
     return api.create_response(request, resultado, status=status_code)
+
+
+# ==========================================
+# DASHBOARD — Resumen por empresa
+# ==========================================
+
+@api.get("/dashboard/resumen")
+async def dashboard_resumen(request):
+    rut_empresa = extract_tenant_rut(request)
+    if not rut_empresa:
+        return {"error": "No autenticado"}, 401
+
+    headers = make_tenant_headers(request)
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp_productos = await client.get(
+                "http://127.0.0.1:8002/api/inventario/productos/",
+                headers=headers, timeout=5.0
+            )
+            total_productos = len(resp_productos.json()) if resp_productos.status_code == 200 else 0
+        except Exception:
+            total_productos = 0
+
+        try:
+            resp_pedidos = await client.get(
+                "http://127.0.0.1:8007/pedidos/",
+                headers=headers, timeout=5.0
+            )
+            pedidos_data = resp_pedidos.json() if resp_pedidos.status_code == 200 else []
+            total_pedidos = len(pedidos_data)
+            pedidos_entregados = sum(1 for p in pedidos_data if p.get('estado') == 'Entregado')
+        except Exception:
+            total_pedidos = 0
+            pedidos_entregados = 0
+
+        try:
+            resp_envios = await client.get(
+                "http://127.0.0.1:8006/api/envios/envios/",
+                headers=headers, timeout=5.0
+            )
+            envios_data = resp_envios.json() if resp_envios.status_code == 200 else []
+            if isinstance(envios_data, list):
+                total_envios = len(envios_data)
+                envios_entregados = sum(1 for e in envios_data if e.get('estado') == 'Entregado')
+            else:
+                total_envios = 0
+                envios_entregados = 0
+        except Exception:
+            total_envios = 0
+            envios_entregados = 0
+
+    return {
+        "total_productos": total_productos,
+        "total_pedidos": total_pedidos,
+        "pedidos_entregados": pedidos_entregados,
+        "total_envios": total_envios,
+        "envios_entregados": envios_entregados,
+    }
 
 
 # ¡LA MAGIA OCURRE AQUÍ! Acoplamos el router a la API principal

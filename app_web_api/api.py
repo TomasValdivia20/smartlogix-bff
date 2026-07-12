@@ -460,22 +460,34 @@ async def dashboard_resumen(request):
             pedidos_data = resp_pedidos.json() if resp_pedidos.status_code == 200 else []
             total_pedidos = len(pedidos_data)
             pedidos_entregados = sum(1 for p in pedidos_data if p.get('estado') == 'Entregado')
-            ventas_totales = sum(p.get('total', 0) or 0 for p in pedidos_data if p.get('estado') == 'Entregado')
-            ventas_pendientes = sum(p.get('total', 0) or 0 for p in pedidos_data if p.get('estado') != 'Entregado')
+            ventas_totales = sum(float(p.get('total', 0) or 0) for p in pedidos_data)
+            balance = sum(float(p.get('total', 0) or 0) for p in pedidos_data if p.get('estado') == 'Entregado')
+            ventas_pendientes = sum(float(p.get('total', 0) or 0) for p in pedidos_data if p.get('estado') != 'Entregado')
             trafico_semanal = [0.0] * 7
             for p in pedidos_data:
                 if p.get('estado') == 'Entregado' and p.get('fecha_actualizacion'):
                     try:
                         fecha = datetime.fromisoformat(p['fecha_actualizacion'].replace('Z', ''))
-                        trafico_semanal[fecha.weekday()] += p.get('total', 0) or 0
+                        trafico_semanal[fecha.weekday()] += float(p.get('total', 0) or 0)
                     except Exception:
                         pass
         except Exception:
             total_pedidos = 0
             pedidos_entregados = 0
+            balance = 0
             ventas_totales = 0
             ventas_pendientes = 0
             trafico_semanal = [0.0] * 7
+
+        try:
+            resp_usuarios = await client.get(
+                "http://127.0.0.1:8001/api/usuario/",
+                headers=headers, timeout=5.0
+            )
+            usuarios_data = resp_usuarios.json() if resp_usuarios.status_code == 200 else []
+            total_clientes = len(usuarios_data) if isinstance(usuarios_data, list) else 0
+        except Exception:
+            total_clientes = 0
 
         try:
             resp_envios = await client.get(
@@ -496,8 +508,10 @@ async def dashboard_resumen(request):
     return {
         "total_productos": total_productos,
         "total_pedidos": total_pedidos,
+        "total_clientes": total_clientes,
         "pedidos_entregados": pedidos_entregados,
-        "ventas_totales": ventas_totales or 1000000,
+        "balance": balance,
+        "ventas_totales": ventas_totales,
         "ventas_pendientes": ventas_pendientes,
         "trafico_semanal": trafico_semanal,
         "total_envios": total_envios,

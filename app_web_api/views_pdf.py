@@ -1,14 +1,16 @@
 import logging
 import httpx
 from django.http import HttpResponse, JsonResponse
+from app_web_api.auth import make_tenant_headers
 
 logger = logging.getLogger(__name__)
 
 
 def descargar_guia_pdf(request, pedido_id):
     url = f"http://127.0.0.1:8007/pedidos/{pedido_id}/guia/pdf/"
+    headers = make_tenant_headers(request)
     try:
-        response = httpx.get(url, timeout=10.0)
+        response = httpx.get(url, headers=headers, timeout=10.0)
         if response.status_code == 200:
             return HttpResponse(response.content, content_type="application/pdf")
 

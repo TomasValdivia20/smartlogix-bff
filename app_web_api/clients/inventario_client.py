@@ -66,9 +66,6 @@ async def obtener_todos_los_productos(request=None):
             return response.json()
             
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            # En lugar de morir con un Traceback, capturamos el error
-            print(f" Error al conectar con Inventario: {e}")
-            print("Activando Fallback: Entregando datos locales.")
+            print(f"Error al conectar con Inventario: {e}")
             
-            # Devolvemos los datos de prueba para que React siga funcionando
-            return MOCK_PRODUCTOS
+            return []

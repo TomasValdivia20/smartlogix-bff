@@ -262,6 +262,7 @@ async def geocodificar(request):
 async def listar_productos(request):
     url_ms_inventario = "http://127.0.0.1:8002/api/inventario/productos/"
     headers = make_tenant_headers(request)
+    print(f"[DEBUG BFF GET] X-Tenant-RUT presente: {'X-Tenant-RUT' in headers}, headers={headers}")
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url_ms_inventario, headers=headers, timeout=5.0)
@@ -416,8 +417,9 @@ async def obtener_guia_bff(request, pedido_id: str):
 async def generar_guia_bff(request, pedido_id: str):
     resultado, status_code = await generar_guia(pedido_id, request=request)
     if status_code == 201:
-        return resultado
+        return api.create_response(request, resultado, status=201)
     return api.create_response(request, resultado, status=status_code)
+
 
 @api.get("/bodegas")
 async def listar_bodegas_bff(request):
@@ -435,7 +437,7 @@ async def listar_bodegas_bff(request):
 async def dashboard_resumen(request):
     rut_empresa = extract_tenant_rut(request)
     if not rut_empresa:
-        return {"error": "No autenticado"}, 401
+        return api.create_response(request, {"error": "No autenticado"}, status=401)
 
     headers = make_tenant_headers(request)
 

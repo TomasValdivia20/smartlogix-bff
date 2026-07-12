@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from ninja import NinjaAPI, Schema, Router
 from typing import Optional
 from .clients.inventario_client import obtener_todos_los_productos
@@ -459,9 +460,22 @@ async def dashboard_resumen(request):
             pedidos_data = resp_pedidos.json() if resp_pedidos.status_code == 200 else []
             total_pedidos = len(pedidos_data)
             pedidos_entregados = sum(1 for p in pedidos_data if p.get('estado') == 'Entregado')
+            ventas_totales = sum(p.get('total', 0) or 0 for p in pedidos_data if p.get('estado') == 'Entregado')
+            ventas_pendientes = sum(p.get('total', 0) or 0 for p in pedidos_data if p.get('estado') != 'Entregado')
+            trafico_semanal = [0.0] * 7
+            for p in pedidos_data:
+                if p.get('estado') == 'Entregado' and p.get('fecha_actualizacion'):
+                    try:
+                        fecha = datetime.fromisoformat(p['fecha_actualizacion'].replace('Z', ''))
+                        trafico_semanal[fecha.weekday()] += p.get('total', 0) or 0
+                    except Exception:
+                        pass
         except Exception:
             total_pedidos = 0
             pedidos_entregados = 0
+            ventas_totales = 0
+            ventas_pendientes = 0
+            trafico_semanal = [0.0] * 7
 
         try:
             resp_envios = await client.get(
@@ -483,6 +497,9 @@ async def dashboard_resumen(request):
         "total_productos": total_productos,
         "total_pedidos": total_pedidos,
         "pedidos_entregados": pedidos_entregados,
+        "ventas_totales": ventas_totales or 1000000,
+        "ventas_pendientes": ventas_pendientes,
+        "trafico_semanal": trafico_semanal,
         "total_envios": total_envios,
         "envios_entregados": envios_entregados,
     }
